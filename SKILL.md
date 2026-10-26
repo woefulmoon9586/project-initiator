@@ -27,7 +27,7 @@ Activate this skill when:
 1. Brainstorm Names (English slug + Chinese title) ──► Interactive Selection (ask_question)
        │
        ▼
-2. Folder Renaming (e.g., "新建文件夹" -> "chosen-name") via rename-and-init.ps1
+2. Folder Renaming & Lock Detection (e.g., "新建文件夹" -> "chosen-name")
        │
        ▼
 3. Repository Initialization (git init -b main + .gitignore)
@@ -59,15 +59,24 @@ When the user shares their initial concept:
 
 ---
 
-### Step 2: Safe Folder Renaming
+### Step 2: Safe Folder Renaming & Lock Detection
 Once the user selects a project name (use the English slug as the directory name):
 1. Check the current folder name:
-   - If the current folder is named `新建文件夹`, `New folder`, or a generic temporary name, rename it to the chosen English name.
-2. Execute the helper script [rename-and-init.ps1](./scripts/rename-and-init.ps1):
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File "./scripts/rename-and-init.ps1" -NewName "<chosen-english-slug>" -InitGit
-   ```
-   *Note: In Windows, the script safely steps up one directory level before renaming to prevent folder locking.*
+   - If the current folder is named `新建文件夹`, `New folder`, `temp`, or a generic temporary name, attempt to rename it to the chosen English name.
+   - If the folder already has a custom name chosen by the user, keep it as is.
+2. Execute the rename logic:
+   - Prefer using the global script path or self-contained PowerShell command:
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.gemini\config\skills\project-initiator\scripts\rename-and-init.ps1" -NewName "<chosen-english-slug>" -InitGit
+     ```
+   - Alternatively, execute inline PowerShell directly:
+     ```powershell
+     powershell -Command "$curr = (Resolve-Path .).Path; $parent = Split-Path $curr -Parent; $leaf = Split-Path $curr -Leaf; $target = Join-Path $parent '<chosen-slug>'; if ($leaf -ne '<chosen-slug>') { Set-Location $parent; try { Rename-Item -Path $curr -NewName '<chosen-slug>' -ErrorAction Stop; Set-Location $target; Write-Host '[RENAME_OK]' } catch { Set-Location $curr; Write-Warning '[RENAME_LOCKED]' } }"
+     ```
+3. **Handle Windows Workspace Locks Gracefully**:
+   - In Windows, if the directory is actively open in the IDE (e.g. Antigravity or VS Code), the IDE's file-watcher holds a handle on the folder root, causing `Rename-Item` to be blocked (`[RENAME_LOCKED]`).
+   - **DO NOT abort or crash the process**. Proceed with Steps 3, 4, and 5 inside the current directory so that Git, README, and project structure are fully created.
+   - Remember whether the rename succeeded or was blocked by lock; this will be communicated clearly to the user in **Step 6**.
 
 ---
 
@@ -109,8 +118,18 @@ Prompt the user for their preferred stack or offer recommended templates:
    git add .
    git commit -m "feat: initial commit for <project-name>"
    ```
-2. Present a clear summary of what was configured:
-   - Project directory path
-   - Git repository status
-   - Link to the generated [README.md](file:///./README.md)
-   - Immediate next action options (e.g. scaffolding dependencies, writing the first module)
+2. Present a clear, well-structured completion summary:
+   - **Project Name**: `<English Slug>` (`<Chinese Companion>`)
+   - **Repository Status**: Git initialized on branch `main` with initial commit.
+   - **Documentation**: Link to the generated [README.md](file:///./README.md).
+   - **Folder Status & Lock Notice**:
+     - **If Renamed Successfully**: Confirm the directory was renamed to `<chosen-slug>`.
+     - **If Blocked by Workspace Lock (e.g. still named `新建文件夹`)**: You **MUST** include an alert card for the user:
+       > [!NOTE]
+       > **📁 文件夹重命名指引**：
+       > 由于当前目录“新建文件夹”已被编辑器作为活动工作区打开，受 Windows 系统进程句柄锁定保护，未能自动在后台重命名。
+       > **所有项目文件与 Git 仓库已在当前目录下顺利初始化完成**。如果你希望文件夹名与项目名保持一致，只需：
+       > 1. 关闭当前编辑器窗口；
+       > 2. 在 Windows 文件资源管理器中将 `新建文件夹` 重命名为 `<chosen-slug>`；
+       > 3. 重新在编辑器中打开改名后的文件夹即可（Git 历史与所有代码文件均完整保留）。
+   - **Next Actions**: 2-3 tailored immediate next actions (e.g., dependency installation, creating the first component/endpoint).
